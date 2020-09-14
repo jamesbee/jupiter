@@ -15,8 +15,9 @@
 package gorm
 
 import (
-	"github.com/douyu/jupiter/pkg/metric"
 	"time"
+
+	"github.com/douyu/jupiter/pkg/metric"
 
 	"github.com/douyu/jupiter/pkg/ecode"
 
@@ -130,7 +131,7 @@ func (config *Config) Build() *DB {
 		config = config.WithInterceptor(metricInterceptor)
 	}
 
-	db, err := Open("mysql", config)
+	db, err := Open(config)
 	if err != nil {
 		if config.OnDialError == "panic" {
 			config.logger.Panic("open mysql", xlog.FieldMod("gorm"), xlog.FieldErrKind(ecode.ErrKindRequestErr), xlog.FieldErr(err), xlog.FieldAddr(config.dsnCfg.Addr), xlog.FieldValueAny(config))
@@ -141,8 +142,11 @@ func (config *Config) Build() *DB {
 		}
 	}
 
-	if err := db.DB().Ping(); err != nil {
+	if db, err := db.DB(); err != nil {
 		config.logger.Panic("ping mysql", xlog.FieldMod("gorm"), xlog.FieldErrKind(ecode.ErrKindRequestErr), xlog.FieldErr(err), xlog.FieldValueAny(config))
+		if err = db.Ping(); err != nil {
+			config.logger.Panic("ping mysql", xlog.FieldMod("gorm"), xlog.FieldErrKind(ecode.ErrKindRequestErr), xlog.FieldErr(err), xlog.FieldValueAny(config))
+		}
 	}
 
 	// store db

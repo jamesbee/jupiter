@@ -17,123 +17,126 @@ package gorm
 import (
 	"context"
 	"errors"
-	"github.com/douyu/jupiter/pkg/util/xdebug"
 
-	"github.com/jinzhu/gorm"
-	// mysql driver
-	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"github.com/douyu/jupiter/pkg/util/xdebug"
+	"github.com/douyu/jupiter/pkg/xlog"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 // SQLCommon ...
 type (
-	// SQLCommon alias of gorm.SQLCommon
-	SQLCommon = gorm.SQLCommon
-	// Callback alias of gorm.Callback
-	Callback = gorm.Callback
-	// CallbackProcessor alias of gorm.CallbackProcessor
-	CallbackProcessor = gorm.CallbackProcessor
-	// Dialect alias of gorm.Dialect
-	Dialect = gorm.Dialect
-	// Scope ...
-	Scope = gorm.Scope
+	// CallbackProcessor wrapper of gorm.processor
+	CallbackProcessor interface {
+		Get(name string) func(db *gorm.DB)
+		Replace(name string, fn func(*DB)) error
+	}
 	// DB ...
 	DB = gorm.DB
 	// Model ...
 	Model = gorm.Model
-	// ModelStruct ...
-	ModelStruct = gorm.ModelStruct
-	// Field ...
-	Field = gorm.Field
-	// FieldStruct ...
-	StructField = gorm.StructField
-	// RowQueryResult ...
-	RowQueryResult = gorm.RowQueryResult
-	// RowsQueryResult ...
-	RowsQueryResult = gorm.RowsQueryResult
 	// Association ...
 	Association = gorm.Association
-	// Errors ...
-	Errors = gorm.Errors
-	// logger ...
-	Logger = gorm.Logger
 )
 
 var (
 	errSlowCommand = errors.New("mysql slow command")
 
-	// IsRecordNotFoundError ...
-	IsRecordNotFoundError = gorm.IsRecordNotFoundError
-
-	// ErrRecordNotFound returns a "record not found error". Occurs only when attempting to query the database with a struct; querying with a slice won't return this error
+	// ErrRecordNotFound record not found error
 	ErrRecordNotFound = gorm.ErrRecordNotFound
-	// ErrInvalidSQL occurs when you attempt a query with invalid SQL
-	ErrInvalidSQL = gorm.ErrInvalidSQL
-	// ErrInvalidTransaction occurs when you are trying to `Commit` or `Rollback`
+	// ErrInvalidTransaction invalid transaction when you are trying to `Commit` or `Rollback`
 	ErrInvalidTransaction = gorm.ErrInvalidTransaction
-	// ErrCantStartTransaction can't start transaction when you are trying to start one with `Begin`
-	ErrCantStartTransaction = gorm.ErrCantStartTransaction
-	// ErrUnaddressable unaddressable value
-	ErrUnaddressable = gorm.ErrUnaddressable
+	// ErrNotImplemented not implemented
+	ErrNotImplemented = gorm.ErrNotImplemented
+	// ErrMissingWhereClause missing where clause
+	ErrMissingWhereClause = gorm.ErrMissingWhereClause
+	// ErrUnsupportedRelation unsupported relations
+	ErrUnsupportedRelation = gorm.ErrUnsupportedRelation
+	// ErrPrimaryKeyRequired primary keys required
+	ErrPrimaryKeyRequired = gorm.ErrPrimaryKeyRequired
+	// ErrModelValueRequired model value required
+	ErrModelValueRequired = gorm.ErrModelValueRequired
+	// ErrInvalidData unsupported data
+	ErrInvalidData = gorm.ErrInvalidData
+	// ErrUnsupportedDriver unsupported driver
+	ErrUnsupportedDriver = gorm.ErrUnsupportedDriver
+	// ErrRegistered registered
+	ErrRegistered = gorm.ErrRegistered
+	// ErrInvalidField invalid field
+	ErrInvalidField = gorm.ErrInvalidField
+	// ErrEmptySlice empty slice found
+	ErrEmptySlice = gorm.ErrEmptySlice
 )
+
+// IsRecordNotFoundError
+func IsRecordNotFoundError(err error) bool {
+	return errors.Is(err, ErrRecordNotFound)
+}
 
 // WithContext ...
 func WithContext(ctx context.Context, db *DB) *DB {
-	db.InstantSet("_context", ctx)
-	return db
+	// db.InstantSet("_context", ctx)
+	return db.WithContext(ctx)
 }
 
 // Open ...
-func Open(dialect string, options *Config) (*DB, error) {
-	inner, err := gorm.Open(dialect, options.DSN)
+func Open(options *Config) (*DB, error) {
+	inner, err := gorm.Open(mysql.Open(options.DSN), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
-	inner.LogMode(options.Debug)
+	if options.Debug || xdebug.IsDevelopmentMode() {
+		inner = inner.Debug()
+	}
 	// 设置默认连接配置
-	inner.DB().SetMaxIdleConns(options.MaxIdleConns)
-	inner.DB().SetMaxOpenConns(options.MaxOpenConns)
+	db, err := inner.DB()
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxIdleConns(options.MaxIdleConns)
+	db.SetMaxOpenConns(options.MaxOpenConns)
 
 	if options.ConnMaxLifetime != 0 {
-		inner.DB().SetConnMaxLifetime(options.ConnMaxLifetime)
+		db.SetConnMaxLifetime(options.ConnMaxLifetime)
 	}
 
-	if xdebug.IsDevelopmentMode() {
-		inner.LogMode(true)
-	}
-
-	replace := func(processor func() *gorm.CallbackProcessor, callbackName string, interceptors ...Interceptor) {
-		old := processor().Get(callbackName)
+	replace := func(processor CallbackProcessor, callbackName string, interceptors ...Interceptor) {
+		old := processor.Get(callbackName)
 		var handler = old
 		for _, inte := range interceptors {
 			handler = inte(options.dsnCfg, callbackName, options)(handler)
 		}
-		processor().Replace(callbackName, handler)
+		err := processor.Replace(callbackName, handler)
+		if err != nil {
+			options.logger.Panic("failed to replace interceptor", xlog.FieldErr(err))
+		}
 	}
 
 	replace(
-		inner.Callback().Delete,
+		inner.Callback().Delete(),
 		"gorm:delete",
 		options.interceptors...,
 	)
 	replace(
-		inner.Callback().Update,
+		inner.Callback().Update(),
 		"gorm:update",
 		options.interceptors...,
 	)
 	replace(
-		inner.Callback().Create,
+		inner.Callback().Create(),
 		"gorm:create",
 		options.interceptors...,
 	)
 	replace(
-		inner.Callback().Query,
+		inner.Callback().Query(),
 		"gorm:query",
 		options.interceptors...,
 	)
 	replace(
-		inner.Callback().RowQuery,
-		"gorm:row_query",
+		inner.Callback().Row(),
+		"gorm:row",
 		options.interceptors...,
 	)
 

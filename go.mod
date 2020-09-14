@@ -28,7 +28,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/grpc-ecosystem/grpc-gateway v1.9.6 // indirect
-	github.com/jinzhu/gorm v1.9.12
 	github.com/json-iterator/go v1.1.10
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/labstack/echo/v4 v4.1.16
@@ -63,5 +62,7 @@ require (
 	google.golang.org/genproto v0.0.0-20191108220845-16a3f7862a1a
 	google.golang.org/grpc v1.26.0
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce
+	gorm.io/driver/mysql v1.0.1
+	gorm.io/gorm v1.20.1
 	sigs.k8s.io/yaml v1.1.0 // indirect
 )

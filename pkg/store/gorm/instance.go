@@ -30,7 +30,11 @@ func Stats() (stats map[string]interface{}) {
 		name := key.(string)
 		db := val.(*DB)
 
-		stats[name] = db.DB().Stats()
+		conn, err := db.DB()
+		if err != nil {
+			panic(err)
+		}
+		stats[name] = conn.Stats()
 		return true
 	})
 

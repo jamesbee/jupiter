@@ -32,7 +32,11 @@ func monitor() {
 	for {
 		time.Sleep(time.Second * 10)
 		Range(func(name string, db *DB) bool {
-			stats := db.DB().Stats()
+			conn, err := db.DB()
+			if err != nil {
+				_logger.Panic("failed to stats db", xlog.FieldErr(err))
+			}
+			stats := conn.Stats()
 			metric.LibHandleSummary.Observe(float64(stats.Idle), name, "idle")
 			metric.LibHandleSummary.Observe(float64(stats.InUse), name, "inuse")
 			metric.LibHandleSummary.Observe(float64(stats.WaitCount), name, "wait")

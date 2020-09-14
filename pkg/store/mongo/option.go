@@ -27,7 +27,7 @@ func StdConfig(name string) Config {
 // RawConfig 裸配置
 // example: minerva.mongodb.demo
 func RawConfig(key string) Config {
-	var config Config
+	config := DefaultConfig()
 	if err := conf.UnmarshalKey(key, &config, conf.TagName("toml")); err != nil {
 		panic(err)
 	}

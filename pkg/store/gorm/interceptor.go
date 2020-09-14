@@ -16,10 +16,12 @@ package gorm
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/douyu/jupiter/pkg/metric"
 	"strconv"
 	"time"
+
+	"github.com/douyu/jupiter/pkg/metric"
 
 	"github.com/douyu/jupiter/pkg/trace"
 	"github.com/douyu/jupiter/pkg/util/xcolor"
@@ -27,20 +29,20 @@ import (
 )
 
 // Handler ...
-type Handler func(*Scope)
+type Handler func(db *DB)
 
 // Interceptor ...
 type Interceptor func(*DSN, string, *Config) func(next Handler) Handler
 
 func debugInterceptor(dsn *DSN, op string, options *Config) func(Handler) Handler {
 	return func(next Handler) Handler {
-		return func(scope *Scope) {
-			fmt.Printf("%-50s[%s] => %s\n", xcolor.Green(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Green("Send: "+logSQL(scope.SQL, scope.SQLVars, true)))
+		return func(scope *DB) {
+			fmt.Printf("%-50s[%s] => %s\n", xcolor.Green(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Green("Send: "+logSQL(scope.Statement.SQL.String(), scope.Statement.Vars, true)))
 			next(scope)
-			if scope.HasError() {
-				fmt.Printf("%-50s[%s] => %s\n", xcolor.Red(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Red("Erro: "+scope.DB().Error.Error()))
+			if scope.Error != nil {
+				fmt.Printf("%-50s[%s] => %s\n", xcolor.Red(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Red("Erro: "+scope.Error.Error()))
 			} else {
-				fmt.Printf("%-50s[%s] => %s\n", xcolor.Green(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Green("Affected: "+strconv.Itoa(int(scope.DB().RowsAffected))))
+				fmt.Printf("%-50s[%s] => %s\n", xcolor.Green(dsn.Addr+"/"+dsn.DBName), time.Now().Format("04:05.000"), xcolor.Green("Affected: "+strconv.Itoa(int(scope.RowsAffected))))
 			}
 		}
 	}
@@ -48,34 +50,34 @@ func debugInterceptor(dsn *DSN, op string, options *Config) func(Handler) Handle
 
 func metricInterceptor(dsn *DSN, op string, options *Config) func(Handler) Handler {
 	return func(next Handler) Handler {
-		return func(scope *Scope) {
+		return func(scope *DB) {
 			beg := time.Now()
 			next(scope)
 			cost := time.Since(beg)
 
 			// error metric
-			if scope.HasError() {
-				metric.LibHandleCounter.WithLabelValues(metric.TypeGorm, dsn.DBName+"."+scope.TableName(), dsn.Addr, "ERR").Inc()
+			if scope.Error != nil {
+				metric.LibHandleCounter.WithLabelValues(metric.TypeGorm, dsn.DBName+"."+scope.Statement.Table, dsn.Addr, "ERR").Inc()
 				// todo sql语句，需要转换成脱密状态才能记录到日志
-				if scope.DB().Error != ErrRecordNotFound {
-					options.logger.Error("mysql err", xlog.FieldErr(scope.DB().Error), xlog.FieldName(dsn.DBName+"."+scope.TableName()), xlog.FieldMethod(op))
+				if errors.Is(scope.Error, ErrRecordNotFound) {
+					options.logger.Error("mysql err", xlog.FieldErr(scope.Error), xlog.FieldName(dsn.DBName+"."+scope.Statement.Table), xlog.FieldMethod(op))
 				} else {
-					options.logger.Warn("record not found", xlog.FieldErr(scope.DB().Error), xlog.FieldName(dsn.DBName+"."+scope.TableName()), xlog.FieldMethod(op))
+					options.logger.Warn("record not found", xlog.FieldErr(scope.Error), xlog.FieldName(dsn.DBName+"."+scope.Statement.Table), xlog.FieldMethod(op))
 				}
 			} else {
-				metric.LibHandleCounter.Inc(metric.TypeGorm, dsn.DBName+"."+scope.TableName(), dsn.Addr, "OK")
+				metric.LibHandleCounter.Inc(metric.TypeGorm, dsn.DBName+"."+scope.Statement.Table, dsn.Addr, "OK")
 			}
 
-			metric.LibHandleHistogram.WithLabelValues(metric.TypeGorm, dsn.DBName+"."+scope.TableName(), dsn.Addr).Observe(cost.Seconds())
+			metric.LibHandleHistogram.WithLabelValues(metric.TypeGorm, dsn.DBName+"."+scope.Statement.Table, dsn.Addr).Observe(cost.Seconds())
 
 			if options.SlowThreshold > time.Duration(0) && options.SlowThreshold < cost {
 				options.logger.Error(
 					"slow",
 					xlog.FieldErr(errSlowCommand),
 					xlog.FieldMethod(op),
-					xlog.FieldExtMessage(logSQL(scope.SQL, scope.SQLVars, options.DetailSQL)),
+					xlog.FieldExtMessage(logSQL(scope.Statement.SQL.String(), scope.Statement.Vars, options.DetailSQL)),
 					xlog.FieldAddr(dsn.Addr),
-					xlog.FieldName(dsn.DBName+"."+scope.TableName()),
+					xlog.FieldName(dsn.DBName+"."+scope.Statement.Table),
 					xlog.FieldCost(cost),
 				)
 			}
@@ -92,8 +94,8 @@ func logSQL(sql string, args []interface{}, containArgs bool) string {
 
 func traceInterceptor(dsn *DSN, op string, options *Config) func(Handler) Handler {
 	return func(next Handler) Handler {
-		return func(scope *Scope) {
-			if val, ok := scope.Get("_context"); ok {
+		return func(scope *DB) {
+			if val, ok := scope.InstanceGet("_context"); ok {
 				if ctx, ok := val.(context.Context); ok {
 					span, _ := trace.StartSpanFromContext(
 						ctx,
@@ -112,7 +114,7 @@ func traceInterceptor(dsn *DSN, op string, options *Config) func(Handler) Handle
 					span.SetTag("peer.service", "mysql")
 					span.SetTag("db.instance", dsn.DBName)
 					span.SetTag("peer.address", dsn.Addr)
-					span.SetTag("peer.statement", logSQL(scope.SQL, scope.SQLVars, options.DetailSQL))
+					span.SetTag("peer.statement", logSQL(scope.Statement.SQL.String(), scope.Statement.Vars, options.DetailSQL))
 					return
 				}
 			}

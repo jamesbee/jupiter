@@ -2,11 +2,21 @@ package mongo
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
+
+	"github.com/douyu/jupiter/pkg/conf"
 )
 
 func TestStdConfig(t *testing.T) {
+	sr := strings.NewReader("[jupiter.mongo.demo]\nsocketTimeout=\"5s\"\npoolLimit=100")
+	if err := conf.LoadFromReader(sr, toml.Unmarshal); err != nil {
+		panic(err)
+	}
+
 	type args struct {
 		name string
 	}
@@ -38,6 +48,11 @@ func TestStdConfig(t *testing.T) {
 }
 
 func TestRawConfig(t *testing.T) {
+	sr := strings.NewReader("[minerva.mongo.demo]\nsocketTimeout=\"5s\"\npoolLimit=100")
+	if err := conf.LoadFromReader(sr, toml.Unmarshal); err != nil {
+		panic(err)
+	}
+
 	type args struct {
 		key string
 	}
